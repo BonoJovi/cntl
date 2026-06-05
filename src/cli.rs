@@ -1,4 +1,9 @@
+use std::fs;
+use std::path::PathBuf;
+
+use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
+use rusqlite::Connection;
 
 /// cntl — a Rust-based VCS with content-addressable storage
 /// and a two-tier history model.
@@ -41,12 +46,12 @@ pub enum Command {
     Log,
 }
 
-pub fn run() -> anyhow::Result<()> {
+pub fn run() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
         Command::Init => {
-            println!("init: not implemented yet");
+            init()?;
         }
         Command::Config { key, value, local } => {
             println!(
@@ -64,5 +69,39 @@ pub fn run() -> anyhow::Result<()> {
         }
     }
 
+    Ok(())
+}
+
+const SCHEMA_SQL: &str = "\
+CREATE TABLE objects (
+    hash     BLOB PRIMARY KEY,
+    obj_type TEXT NOT NULL,
+    data     BLOB NOT NULL
+);
+CREATE TABLE refs (
+    name   TEXT PRIMARY KEY,
+    target BLOB NOT NULL
+);
+CREATE TABLE settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);";
+
+fn init() -> Result<()> {
+    let cntl_dir = PathBuf::from(".cntl");
+    if cntl_dir.exists() {
+        bail!(".cntl already exists in the current directory");
+    }
+
+    fs::create_dir(&cntl_dir).context("failed to create .cntl directory")?;
+
+    let db_path = cntl_dir.join("repo.db");
+    let conn = Connection::open(&db_path)
+        .with_context(|| format!("failed to create {}", db_path.display()))?;
+    conn.execute_batch(SCHEMA_SQL)
+        .context("failed to initialize repo.db schema")?;
+
+    let shown = fs::canonicalize(&cntl_dir).unwrap_or(cntl_dir);
+    println!("Initialized empty cntl repository in {}", shown.display());
     Ok(())
 }

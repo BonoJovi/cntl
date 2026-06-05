@@ -4,3 +4,27 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+# CLI: 宣言的にサブコマンドを定義するため derive 機能を有効化
+clap = { version = "4", features = ["derive"] }
+
+# ハッシュ: blake3 は SHA-256 より高速で暗号学的にも安全
+blake3 = "1"
+
+# シリアライゼーション: bincode 2.x + serde 互換機能
+serde = { version = "1", features = ["derive"] }
+bincode = { version = "2", features = ["serde"] }
+
+# SQLite: bundled で SQLite 本体を同梱 (システム依存を減らす)
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+# クロスプラットフォームの標準パス取得 (XDG / macOS / Windows)
+directories = "5"
+
+# 作業ツリーのファイルシステム走査
+walkdir = "2"
+
+# 日時 (UTC 保存、表示時にローカル TZ へ変換)
+chrono = "0.4"
+
+# アプリケーション層のエラーハンドリング
+anyhow = "1"

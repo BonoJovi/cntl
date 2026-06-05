@@ -121,39 +121,157 @@ Gitとは別設計の独自バージョン管理システム (VCS)。Rust製、C
 
 ---
 
-## 技術的な方向性
+---
 
-- **言語**: Rust (edition 2024)
-- **CAS**: content-addressable storage がコア
-- **ハッシュ**: rapidhash 系 (`cntl.test/` の実験を継承)
-- **CLI + TUI**: 両方を一級市民として扱う
+## MVP (v0.1.0) スコープ — Walking Skeleton
+
+最小限の「ローカルで単一履歴を記録できる」レベル。
+
+### 含むコマンド
+- `cntl init` — 新規リポジトリ作成 (`.cntl/cntl.db` を生成)
+- `cntl config user.name "..."` / `user.email "..."` — 著者情報設定
+- `cntl status` — 作業ツリーの変更を表示 (HEAD と比較)
+- `cntl commit -m "..."` — 全変更を自動ステージングして 1 コミット
+- `cntl log` — コミット履歴を表示
+
+### MVP に含まないもの (v0.2 以降)
+- ブランチ / merge / rebase
+- リモート操作 (push/pull/fetch)
+- conflict (merge を持たないので発生しない)
+- 2層履歴のグルーピング
+- タグ
+- ステージングの手動オーバーライド (まずは全自動のみ)
+- diff / checkout / restore
+
+---
+
+## 技術スタック (確定)
+
+| 領域 | 採用 | 理由 |
+|---|---|---|
+| 言語 | Rust (edition 2024) | パフォーマンス、型安全性 |
+| ハッシュ | **blake3** | 高速・暗号学的・モダン (SHA-256 より高速) |
+| シリアライズ | **bincode** + serde | Rust 事実上標準、コンパクト |
+| ストレージ | **SQLite** (rusqlite) | 2 層 DB (グローバル設定 + per-repo)、ACID、Fossil/Sapling 路線 |
+| CLI | **clap** (derive macro) | エコシステム標準 |
+| 設定ディレクトリ解決 | directories | XDG/macOS/Windows 標準パス取得 |
+| 作業ツリースキャン | walkdir | 軽量・標準的 |
+| 日時 | chrono | UTC 保存、表示時にローカル TZ へ変換 |
+| TUI (将来) | ratatui 等 | conflict 解消モードで採用予定 |
+
+---
+
+## オブジェクトモデル (MVP)
+
+Git 同様の 3 種類のオブジェクトを採用 (v0.2+ で patch-based モデルへの段階移行を検討):
+
+- **blob**: ファイル内容のスナップショット
+- **tree**: ディレクトリスナップショット (エントリ名 → blob/tree ハッシュのマップ)
+- **commit**: parent commit hash + tree hash + author + timestamp (UTC) + message
+
+すべて bincode でシリアライズして SQLite に格納。
+
+### 作業ツリー追跡
+- **index なし** (MVP)。`cntl status` 実行時に作業ツリーを毎回スキャンして HEAD tree と比較
+- 大規模リポでパフォーマンス問題が出た時に index 化を検討 (v0.2+)
+
+---
+
+## ストレージ構造 (MVP) — 2 層 DB 構造
+
+**設計意図**: グローバル設定とリポジトリデータを分離して、
+
+- 大規模リポのパフォーマンス影響を他リポに波及させない
+- DB ファイル破損の影響範囲を1リポに限定
+- バックアップ/転送単位がリポジトリ単位で完結
+- グローバル設定を全リポで共有 (毎回 `cntl config` し直さなくて済む)
+
+### グローバル DB
+
+- **場所**: XDG 準拠 (`directories` クレートでクロスプラットフォーム対応)
+  - Linux: `~/.config/cntl/global.db`
+  - macOS: `~/Library/Application Support/cntl/global.db`
+  - Windows: `%APPDATA%/cntl/global.db`
+  - 環境変数 `CNTL_HOME` で上書き可能
+- **役割**: 全リポジトリで共有する user-level 設定
+- **スキーマ**:
+
+```sql
+CREATE TABLE settings (
+    key    TEXT PRIMARY KEY,   -- 'user.name', 'user.email' 等
+    value  TEXT NOT NULL
+);
+```
+
+### リポジトリ DB
+
+- **場所**: `<repo>/.cntl/repo.db` (1 ファイル = 1 リポジトリ)
+- **役割**: そのリポのオブジェクト・refs・リポ固有設定
+- **スキーマ**:
+
+```sql
+CREATE TABLE objects (
+    hash      BLOB PRIMARY KEY,  -- blake3 hash (32 bytes)
+    obj_type  TEXT NOT NULL,     -- 'blob' | 'tree' | 'commit'
+    data      BLOB NOT NULL      -- bincode-serialized payload
+);
+
+CREATE TABLE refs (
+    name      TEXT PRIMARY KEY,  -- v0.1.0 は 'HEAD' のみ
+    target    BLOB NOT NULL      -- commit hash
+);
+
+CREATE TABLE settings (
+    key       TEXT PRIMARY KEY,  -- リポ固有の設定オーバーライド
+    value     TEXT NOT NULL
+);
+```
+
+### `cntl config` の動作
+
+- `cntl config user.name "..."` → デフォルトで**グローバル DB** に書く
+- `cntl config --local user.name "..."` → **リポジトリ DB** に書く (グローバルを上書き)
+- 読み取り順序: **local → global → 未設定エラー** (Git と同じ優先順位)
+
+---
+
+## ロードマップ
+
+| Version | 内容 |
+|---|---|
+| **v0.1.0 (MVP)** | Walking skeleton: init / config / status / commit / log |
+| v0.2.0 | branch、checkout、restore、diff |
+| v0.3.0 | conflict メタデータ分離 + TUI 解消モード |
+| v0.4.0 | 2 層履歴 (グルーピング)、branch-scoped タグ |
+| v0.5.0 | リモート操作 (push/pull/fetch) |
+| 将来 | patch-based モデルへの移行 (Pijul/Darcs 風) |
+
+---
 
 ## 差別化ポイント
 
 | 項目 | Git | cntl |
 |---|---|---|
-| 履歴 | 1層、squash/rebaseは破壊的 | 2層、グルーピングは非破壊 |
+| 履歴 | 1 層、squash/rebase は破壊的 | 2 層、グルーピングは非破壊 |
 | ステージング | 必須の中間概念 | 自動検出、必要時のみ手動 |
 | conflict markers | ファイルに埋め込み | メタデータ分離、ファイル無傷 |
 | タグ | branch-agnostic | branch-scoped + 履歴 |
-| 解消UX | 外部ツール任せ | 第一級のTUIモード |
+| 解消 UX | 外部ツール任せ | 第一級の TUI モード |
+| ストレージ | ファイルベース (objects/) | 単一 SQLite DB |
 
 ## 設計原則
 
 - **摩擦を減らす**: 日常運用で考えなくて済むことは自動化
 - **履歴を壊さない**: 後付けで整理できるが、元の事実は残る
-- **ファイルを壊さない**: VCSの内部状態が作業ファイルを汚さない
-- **CLI/TUI両対応**: スクリプト化容易、対話的操作も快適
+- **ファイルを壊さない**: VCS の内部状態が作業ファイルを汚さない
+- **CLI/TUI 両対応**: スクリプト化容易、対話的操作も快適
 
 ---
 
-## 未確定事項 (今後の設計議論で詰める)
+## 未確定事項 (今後詰める)
 
-- ブランチ/マージ/リベースのモデル
-- `log` / `diff` 表示の粒度と既定
-- リモート操作 (push/pull/fetch) のコマンド体系
-- detached HEAD相当のエラー状態の扱い
-- `.cntl/` ディレクトリ構造
-- コミットメッセージのフォーマット規約
-- 認証/転送プロトコル
-- ターゲットスケール（規模の上限想定）
+- コミットメッセージのフォーマット規約 (conventional commits か独自か)
+- ターゲットスケール (規模上限の想定)
+- 認証/転送プロトコル (v0.5 リモート設計時)
+- detached HEAD 相当のエラー状態の扱い (v0.2 branch 導入時)
+- `log` / `diff` 表示の粒度と既定 (実装時に決定)

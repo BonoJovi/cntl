@@ -58,7 +58,7 @@ pub fn run() -> Result<()> {
             config(key, value, local)?;
         }
         Command::Status => {
-            println!("status: not implemented yet");
+            status()?;
         }
         Command::Commit { message } => {
             println!("commit: message={message:?} — not implemented yet");
@@ -196,6 +196,58 @@ fn local_db_path_existing() -> Result<PathBuf> {
         bail!("not in a cntl repository (no .cntl in current directory)");
     }
     Ok(path)
+}
+
+fn status() -> Result<()> {
+    let repo_db = local_db_path_existing()?;
+
+    let conn = Connection::open(&repo_db)
+        .with_context(|| format!("failed to open {}", repo_db.display()))?;
+    let head: Option<Vec<u8>> = conn
+        .query_row(
+            "SELECT target FROM refs WHERE name = 'HEAD'",
+            [],
+            |row| row.get(0),
+        )
+        .optional()
+        .context("failed to read HEAD")?;
+
+    let files = scan_working_tree(Path::new("."))?;
+
+    if head.is_none() {
+        println!("No commits yet.");
+        println!();
+        if files.is_empty() {
+            println!("nothing to commit (working tree empty)");
+        } else {
+            println!("Untracked files:");
+            for path in &files {
+                println!("\tnew file:   {path}");
+            }
+        }
+    } else {
+        // HEAD tree comparison lands together with `cntl commit`.
+        println!("HEAD exists, but tree comparison is not implemented yet.");
+    }
+
+    Ok(())
+}
+
+fn scan_working_tree(root: &Path) -> Result<Vec<String>> {
+    let mut files = Vec::new();
+    for entry in walkdir::WalkDir::new(root)
+        .into_iter()
+        .filter_entry(|e| e.file_name() != ".cntl")
+    {
+        let entry = entry.context("failed to walk working tree")?;
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let rel = entry.path().strip_prefix(root).unwrap_or(entry.path());
+        files.push(rel.to_string_lossy().into_owned());
+    }
+    files.sort();
+    Ok(files)
 }
 
 fn global_db_path() -> Result<PathBuf> {

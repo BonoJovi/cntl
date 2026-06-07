@@ -1,6 +1,5 @@
-// Types defined ahead of their first writer; remove once exercised.
-#![allow(dead_code)]
-
+use anyhow::{Context, Result};
+use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
 
 /// blake3 digest (32 bytes). Identifies every stored object.
@@ -48,4 +47,25 @@ pub struct Commit {
 /// blake3 hash of a byte slice, returned as a 32-byte array.
 pub fn hash_bytes(data: &[u8]) -> ObjectHash {
     *blake3::hash(data).as_bytes()
+}
+
+/// Serialize a value with bincode using the standard configuration.
+pub fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>> {
+    bincode::serde::encode_to_vec(value, bincode::config::standard())
+        .context("failed to encode object")
+}
+
+/// Insert an object into the `objects` table; no-op if the hash is already present.
+pub fn store_object(
+    conn: &Connection,
+    hash: &ObjectHash,
+    obj_type: &str,
+    data: &[u8],
+) -> Result<()> {
+    conn.execute(
+        "INSERT OR IGNORE INTO objects (hash, obj_type, data) VALUES (?1, ?2, ?3)",
+        params![&hash[..], obj_type, data],
+    )
+    .context("failed to store object")?;
+    Ok(())
 }

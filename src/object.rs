@@ -1,6 +1,7 @@
-use anyhow::{Context, Result};
-use rusqlite::{Connection, params};
+use anyhow::{Context, Result, bail};
+use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
+use serde::de::DeserializeOwned;
 
 /// blake3 digest (32 bytes). Identifies every stored object.
 pub type ObjectHash = [u8; 32];
@@ -68,4 +69,47 @@ pub fn store_object(
     )
     .context("failed to store object")?;
     Ok(())
+}
+
+/// Deserialize a value with bincode using the standard configuration.
+pub fn decode<T: DeserializeOwned>(bytes: &[u8]) -> Result<T> {
+    let (value, _len) = bincode::serde::decode_from_slice(bytes, bincode::config::standard())
+        .context("failed to decode object")?;
+    Ok(value)
+}
+
+fn load_raw(conn: &Connection, hash: &ObjectHash, expected_type: &str) -> Result<Vec<u8>> {
+    let row: Option<(String, Vec<u8>)> = conn
+        .query_row(
+            "SELECT obj_type, data FROM objects WHERE hash = ?1",
+            params![&hash[..]],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .context("failed to query object")?;
+    let (obj_type, data) = row.with_context(|| format!("object not found: {}", hex_full(hash)))?;
+    if obj_type != expected_type {
+        bail!(
+            "object {} has type {obj_type}, expected {expected_type}",
+            hex_full(hash)
+        );
+    }
+    Ok(data)
+}
+
+pub fn load_tree(conn: &Connection, hash: &ObjectHash) -> Result<Tree> {
+    decode(&load_raw(conn, hash, "tree")?)
+}
+
+pub fn load_commit(conn: &Connection, hash: &ObjectHash) -> Result<Commit> {
+    decode(&load_raw(conn, hash, "commit")?)
+}
+
+fn hex_full(hash: &ObjectHash) -> String {
+    use std::fmt::Write;
+    let mut s = String::with_capacity(64);
+    for b in hash {
+        let _ = write!(s, "{b:02x}");
+    }
+    s
 }

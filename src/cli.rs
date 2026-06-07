@@ -66,7 +66,7 @@ pub fn run() -> Result<()> {
             commit(&message)?;
         }
         Command::Log => {
-            println!("log: not implemented yet");
+            log()?;
         }
     }
 
@@ -201,21 +201,12 @@ fn local_db_path_existing() -> Result<PathBuf> {
 
 fn status() -> Result<()> {
     let repo_db = local_db_path_existing()?;
-
     let conn = Connection::open(&repo_db)
         .with_context(|| format!("failed to open {}", repo_db.display()))?;
-    let head: Option<Vec<u8>> = conn
-        .query_row(
-            "SELECT target FROM refs WHERE name = 'HEAD'",
-            [],
-            |row| row.get(0),
-        )
-        .optional()
-        .context("failed to read HEAD")?;
-
+    let head = read_head(&conn)?;
     let files = scan_working_tree(Path::new("."))?;
 
-    if head.is_none() {
+    let Some(head_hash) = head else {
         println!("No commits yet.");
         println!();
         if files.is_empty() {
@@ -226,11 +217,90 @@ fn status() -> Result<()> {
                 println!("\tnew file:   {path}");
             }
         }
-    } else {
-        // HEAD tree comparison lands together with `cntl commit`.
-        println!("HEAD exists, but tree comparison is not implemented yet.");
+        return Ok(());
+    };
+
+    let head_commit = object::load_commit(&conn, &head_hash)?;
+    let mut head_files: std::collections::HashMap<String, ObjectHash> =
+        std::collections::HashMap::new();
+    collect_tree_files(&conn, &head_commit.tree, "", &mut head_files)?;
+
+    let mut modified = Vec::new();
+    let mut new_files = Vec::new();
+    let mut deleted = Vec::new();
+
+    for path in &files {
+        let data = fs::read(path).with_context(|| format!("failed to read {path}"))?;
+        let blob = Blob { data };
+        let wt_hash = object::hash_bytes(&object::encode(&blob)?);
+        match head_files.remove(path) {
+            Some(head_hash) if head_hash == wt_hash => {}
+            Some(_) => modified.push(path.clone()),
+            None => new_files.push(path.clone()),
+        }
+    }
+    deleted.extend(head_files.into_keys());
+    deleted.sort();
+
+    if modified.is_empty() && new_files.is_empty() && deleted.is_empty() {
+        println!("nothing to commit, working tree clean");
+        return Ok(());
     }
 
+    println!("Changes since last commit:");
+    for path in &modified {
+        println!("\tmodified:   {path}");
+    }
+    for path in &new_files {
+        println!("\tnew file:   {path}");
+    }
+    for path in &deleted {
+        println!("\tdeleted:    {path}");
+    }
+    Ok(())
+}
+
+fn read_head(conn: &Connection) -> Result<Option<ObjectHash>> {
+    conn.query_row(
+        "SELECT target FROM refs WHERE name = 'HEAD'",
+        [],
+        |row| {
+            let bytes: Vec<u8> = row.get(0)?;
+            bytes.try_into().map_err(|_| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    0,
+                    rusqlite::types::Type::Blob,
+                    "HEAD target is not a 32-byte hash".into(),
+                )
+            })
+        },
+    )
+    .optional()
+    .context("failed to read HEAD")
+}
+
+fn collect_tree_files(
+    conn: &Connection,
+    tree_hash: &ObjectHash,
+    prefix: &str,
+    out: &mut std::collections::HashMap<String, ObjectHash>,
+) -> Result<()> {
+    let tree = object::load_tree(conn, tree_hash)?;
+    for entry in tree.entries {
+        let path = if prefix.is_empty() {
+            entry.name
+        } else {
+            format!("{prefix}/{}", entry.name)
+        };
+        match entry.kind {
+            TreeEntryKind::Blob => {
+                out.insert(path, entry.hash);
+            }
+            TreeEntryKind::Tree => {
+                collect_tree_files(conn, &entry.hash, &path, out)?;
+            }
+        }
+    }
     Ok(())
 }
 
@@ -266,24 +336,7 @@ fn commit(message: &str) -> Result<()> {
     let tx = conn.transaction().context("failed to begin transaction")?;
 
     let tree_hash = write_tree_recursive(&tx, Path::new("."))?;
-
-    let parent: Option<ObjectHash> = tx
-        .query_row(
-            "SELECT target FROM refs WHERE name = 'HEAD'",
-            [],
-            |row| {
-                let bytes: Vec<u8> = row.get(0)?;
-                bytes.try_into().map_err(|_| {
-                    rusqlite::Error::FromSqlConversionFailure(
-                        0,
-                        rusqlite::types::Type::Blob,
-                        "HEAD target is not a 32-byte hash".into(),
-                    )
-                })
-            },
-        )
-        .optional()
-        .context("failed to read HEAD")?;
+    let parent = read_head(&tx)?;
 
     let commit_obj = Commit {
         parent,
@@ -355,6 +408,54 @@ fn write_tree_recursive(conn: &Connection, dir: &Path) -> Result<ObjectHash> {
     let hash = object::hash_bytes(&bytes);
     object::store_object(conn, &hash, "tree", &bytes)?;
     Ok(hash)
+}
+
+fn log() -> Result<()> {
+    let repo_db = local_db_path_existing()?;
+    let conn = Connection::open(&repo_db)
+        .with_context(|| format!("failed to open {}", repo_db.display()))?;
+
+    let Some(head_hash) = read_head(&conn)? else {
+        bail!("no commits yet");
+    };
+
+    let mut current = Some(head_hash);
+    let mut first = true;
+    while let Some(hash) = current {
+        let commit = object::load_commit(&conn, &hash)?;
+        if !first {
+            println!();
+        }
+        print_commit(&hash, &commit);
+        first = false;
+        current = commit.parent;
+    }
+    Ok(())
+}
+
+fn print_commit(hash: &ObjectHash, commit: &Commit) {
+    let utc = chrono::DateTime::<chrono::Utc>::from_timestamp(commit.timestamp_utc, 0)
+        .unwrap_or_else(chrono::Utc::now);
+    let local = utc.with_timezone(&chrono::Local);
+    println!("commit {}", hex_full(hash));
+    println!(
+        "Author: {} <{}>",
+        commit.author_name, commit.author_email
+    );
+    println!("Date:   {}", local.format("%Y-%m-%d %H:%M:%S %z"));
+    println!();
+    for line in commit.message.lines() {
+        println!("    {line}");
+    }
+}
+
+fn hex_full(hash: &ObjectHash) -> String {
+    use std::fmt::Write;
+    let mut s = String::with_capacity(64);
+    for b in hash {
+        let _ = write!(s, "{b:02x}");
+    }
+    s
 }
 
 fn hex_short(hash: &ObjectHash) -> String {

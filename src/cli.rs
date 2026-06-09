@@ -24,8 +24,8 @@ pub enum Command {
 
     /// Get or set configuration values
     Config {
-        /// Configuration key (e.g., user.name)
-        key: String,
+        /// Configuration key (e.g., user.name). Omit when using --all.
+        key: Option<String>,
 
         /// Configuration value (omit to read the current value)
         value: Option<String>,
@@ -33,6 +33,14 @@ pub enum Command {
         /// Write to repository-local config instead of global
         #[arg(long)]
         local: bool,
+
+        /// List all active configuration values with their scope
+        #[arg(long, conflicts_with_all = ["key", "value", "local"])]
+        all: bool,
+
+        /// With --all, also show values shadowed by higher-priority scopes
+        #[arg(long, requires = "all")]
+        verbose: bool,
     },
 
     /// Show changes between the working tree and HEAD
@@ -56,8 +64,14 @@ pub fn run() -> Result<()> {
         Command::Init => {
             init()?;
         }
-        Command::Config { key, value, local } => {
-            config(key, value, local)?;
+        Command::Config {
+            key,
+            value,
+            local,
+            all,
+            verbose,
+        } => {
+            config(key, value, local, all, verbose)?;
         }
         Command::Status => {
             status()?;
@@ -113,11 +127,85 @@ CREATE TABLE IF NOT EXISTS settings (
     value TEXT NOT NULL
 );";
 
-fn config(key: String, value: Option<String>, local: bool) -> Result<()> {
+fn config(
+    key: Option<String>,
+    value: Option<String>,
+    local: bool,
+    all: bool,
+    verbose: bool,
+) -> Result<()> {
+    if verbose && !all {
+        bail!("--verbose can only be used together with --all");
+    }
+    if all {
+        return list_config(verbose);
+    }
+    let key = key.ok_or_else(|| anyhow::anyhow!("missing config key (or pass --all)"))?;
     match value {
         Some(v) => write_config(&key, &v, local),
         None => read_config(&key, local),
     }
+}
+
+fn list_config(verbose: bool) -> Result<()> {
+    let local_path = PathBuf::from(".cntl/repo.db");
+    let local_entries = if local_path.exists() {
+        read_all_settings(&local_path)?
+    } else {
+        Vec::new()
+    };
+    let global_path = global_db_path()?;
+    let global_entries = if global_path.exists() {
+        read_all_settings(&global_path)?
+    } else {
+        Vec::new()
+    };
+
+    let local_map: std::collections::BTreeMap<String, String> =
+        local_entries.into_iter().collect();
+    let global_map: std::collections::BTreeMap<String, String> =
+        global_entries.into_iter().collect();
+
+    let mut all_keys: std::collections::BTreeSet<&String> = std::collections::BTreeSet::new();
+    all_keys.extend(local_map.keys());
+    all_keys.extend(global_map.keys());
+
+    if all_keys.is_empty() {
+        println!("no configuration set");
+        return Ok(());
+    }
+
+    for key in all_keys {
+        let (effective_scope, effective_value, shadowed) = match (local_map.get(key), global_map.get(key)) {
+            (Some(v), Some(g)) => ("local", v.as_str(), Some(g.as_str())),
+            (Some(v), None) => ("local", v.as_str(), None),
+            (None, Some(g)) => ("global", g.as_str(), None),
+            (None, None) => unreachable!("key came from one of the maps"),
+        };
+        println!("{key}({effective_scope}) \"{effective_value}\"");
+        if verbose {
+            if let Some(g) = shadowed {
+                println!("  shadowed: global = \"{g}\"");
+            }
+        }
+    }
+    Ok(())
+}
+
+fn read_all_settings(path: &Path) -> Result<Vec<(String, String)>> {
+    let conn = Connection::open(path)
+        .with_context(|| format!("failed to open {}", path.display()))?;
+    let mut stmt = conn
+        .prepare("SELECT key, value FROM settings")
+        .context("failed to prepare settings query")?;
+    let rows = stmt
+        .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+        .context("failed to query settings")?;
+    let mut out = Vec::new();
+    for row in rows {
+        out.push(row.context("failed to read setting row")?);
+    }
+    Ok(out)
 }
 
 fn write_config(key: &str, value: &str, local: bool) -> Result<()> {

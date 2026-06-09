@@ -101,6 +101,7 @@ MIT License. 詳細は [LICENSE](LICENSE) を参照。
 
 - 使い方チュートリアル: [docs/TUTORIAL.md](docs/TUTORIAL.md)
 - 設計ドキュメント: [docs/CONCEPT.md](docs/CONCEPT.md)
+- 設計判断記録 (DR): [docs/adr/index.md](docs/adr/index.md)
 - 開発者の他プロダクト (Rust 製):
   - **KakeiBonByRust** — 家計簿アプリ
   - **Promps-Ent** — ブロック志向のプロンプトジェネレータ

@@ -59,6 +59,8 @@ cntl commit -m "first commit"    # → [<hash>] first commit
 cntl log                         # → コミット履歴
 ```
 
+各コマンドの詳しい使い方は [docs/TUTORIAL.md](docs/TUTORIAL.md) を参照。
+
 ---
 
 ## 技術スタック
@@ -97,6 +99,7 @@ MIT License. 詳細は [LICENSE](LICENSE) を参照。
 
 ## 関連
 
+- 使い方チュートリアル: [docs/TUTORIAL.md](docs/TUTORIAL.md)
 - 設計ドキュメント: [docs/CONCEPT.md](docs/CONCEPT.md)
 - 開発者の他プロダクト (Rust 製):
   - **KakeiBonByRust** — 家計簿アプリ

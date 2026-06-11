@@ -97,6 +97,10 @@ fn load_raw(conn: &Connection, hash: &ObjectHash, expected_type: &str) -> Result
     Ok(data)
 }
 
+pub fn load_blob(conn: &Connection, hash: &ObjectHash) -> Result<Blob> {
+    decode(&load_raw(conn, hash, "blob")?)
+}
+
 pub fn load_tree(conn: &Connection, hash: &ObjectHash) -> Result<Tree> {
     decode(&load_raw(conn, hash, "tree")?)
 }

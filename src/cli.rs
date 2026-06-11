@@ -46,6 +46,9 @@ pub enum Command {
     /// Show changes between the working tree and HEAD
     Status,
 
+    /// Show unified diff between the working tree and HEAD
+    Diff,
+
     /// Record a new commit with all current changes
     Commit {
         /// Commit message
@@ -75,6 +78,9 @@ pub fn run() -> Result<()> {
         }
         Command::Status => {
             status()?;
+        }
+        Command::Diff => {
+            diff()?;
         }
         Command::Commit { message } => {
             commit(&message)?;
@@ -346,6 +352,82 @@ fn status() -> Result<()> {
         println!("\tdeleted:    {path}");
     }
     Ok(())
+}
+
+fn diff() -> Result<()> {
+    let repo_db = local_db_path_existing()?;
+    let conn = Connection::open(&repo_db)
+        .with_context(|| format!("failed to open {}", repo_db.display()))?;
+    let head = read_head(&conn)?;
+    let files = scan_working_tree(Path::new("."))?;
+
+    let mut head_files: std::collections::HashMap<String, ObjectHash> =
+        std::collections::HashMap::new();
+    if let Some(head_hash) = &head {
+        let head_commit = object::load_commit(&conn, head_hash)?;
+        collect_tree_files(&conn, &head_commit.tree, "", &mut head_files)?;
+    }
+
+    for path in &files {
+        let wt_bytes = fs::read(path).with_context(|| format!("failed to read {path}"))?;
+        let blob = Blob { data: wt_bytes.clone() };
+        let wt_hash = object::hash_bytes(&object::encode(&blob)?);
+        match head_files.remove(path) {
+            Some(head_hash) if head_hash == wt_hash => {}
+            Some(head_hash) => {
+                let head_blob = object::load_blob(&conn, &head_hash)?;
+                emit_diff(path, Some(&head_blob.data), Some(&wt_bytes));
+            }
+            None => {
+                emit_diff(path, None, Some(&wt_bytes));
+            }
+        }
+    }
+
+    let mut deleted: Vec<(String, ObjectHash)> = head_files.into_iter().collect();
+    deleted.sort_by(|a, b| a.0.cmp(&b.0));
+    for (path, head_hash) in deleted {
+        let head_blob = object::load_blob(&conn, &head_hash)?;
+        emit_diff(&path, Some(&head_blob.data), None);
+    }
+
+    Ok(())
+}
+
+fn emit_diff(path: &str, old: Option<&[u8]>, new: Option<&[u8]>) {
+    println!("diff --cntl a/{path} b/{path}");
+
+    let binary = old.is_some_and(is_binary) || new.is_some_and(is_binary);
+    if binary {
+        println!("Binary files a/{path} and b/{path} differ");
+        return;
+    }
+
+    let old_text = old.and_then(|b| std::str::from_utf8(b).ok()).unwrap_or("");
+    let new_text = new.and_then(|b| std::str::from_utf8(b).ok()).unwrap_or("");
+
+    let old_label = if old.is_some() {
+        format!("a/{path}")
+    } else {
+        "/dev/null".to_string()
+    };
+    let new_label = if new.is_some() {
+        format!("b/{path}")
+    } else {
+        "/dev/null".to_string()
+    };
+
+    let diff = similar::TextDiff::from_lines(old_text, new_text);
+    let unified = diff
+        .unified_diff()
+        .header(&old_label, &new_label)
+        .to_string();
+    print!("{unified}");
+}
+
+fn is_binary(bytes: &[u8]) -> bool {
+    let check_len = bytes.len().min(8192);
+    bytes[..check_len].contains(&0)
 }
 
 fn read_head(conn: &Connection) -> Result<Option<ObjectHash>> {

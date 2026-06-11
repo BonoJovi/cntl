@@ -28,3 +28,6 @@ chrono = "0.4"
 
 # アプリケーション層のエラーハンドリング
 anyhow = "1"
+
+# unified diff 生成 (Myers アルゴリズム)
+similar = "2"

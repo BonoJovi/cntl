@@ -222,7 +222,77 @@ Changes since last commit:
 
 ---
 
-## 6. 履歴を見る — `cntl log`
+## 6. 内容差分を見る — `cntl diff`
+
+`cntl status` で変更されたファイルの一覧は分かりますが、**中身がどう変わったか** までは出ません。`cntl diff` を使うと、HEAD と作業ツリーの内容差分を unified diff 形式で表示します。
+
+### 6.1 編集してから diff
+
+```bash
+echo "first line" >> README.md
+echo "## TODO" > NOTES.md
+cntl diff
+```
+
+```
+diff --cntl a/NOTES.md b/NOTES.md
+--- /dev/null
++++ b/NOTES.md
+@@ -0,0 +1 @@
++## TODO
+diff --cntl a/README.md b/README.md
+--- a/README.md
++++ b/README.md
+@@ -1 +1,2 @@
+ hello cntl
++first line
+```
+
+- **`diff --cntl a/path b/path`** — ファイルごとのヘッダ
+- **`--- a/path`** / **`+++ b/path`** — 旧側 / 新側のラベル
+- **`@@ -行,数 +行,数 @@`** — ハンクヘッダ (Git と同じフォーマット)
+- 行頭の **`-`** / **`+`** が削除 / 追加、空白で始まる行は文脈行
+
+### 6.2 新規ファイル・削除ファイル
+
+新規ファイルは旧側が `/dev/null` に、削除ファイルは新側が `/dev/null` になります。
+
+```bash
+rm NOTES.md
+cntl diff
+```
+
+```
+diff --cntl a/NOTES.md b/NOTES.md
+--- a/NOTES.md
++++ /dev/null
+@@ -1 +0,0 @@
+-## TODO
+```
+
+### 6.3 バイナリファイル
+
+NUL バイトを含むファイル (画像・実行ファイル等) は中身を出さず、1 行で終わります。
+
+```
+diff --cntl a/image.png b/image.png
+Binary files a/image.png and b/image.png differ
+```
+
+判定は **先頭 8KB に NUL バイトがあるか** というシンプルなヒューリスティック (Git と同じ) です。
+
+### 6.4 変更がないとき
+
+何も出力されません (`git diff` と同じ振る舞いです)。
+
+> **詰まりポイント**:
+> - パス引数で絞り込む形式 (`cntl diff README.md`) は v0.1.x では未実装で、常に全変更が出ます。
+> - 任意の 2 コミットを比較する `cntl diff <commit> <commit>` は v0.2.0 以降の予定です。
+> - 着色 (`--color`) や `--stat` 等のオプションはまだありません。
+
+---
+
+## 7. 履歴を見る — `cntl log`
 
 ```bash
 cntl log
@@ -251,7 +321,7 @@ Date:   2026-06-09 15:30:00 +0900
 
 ---
 
-## 7. 全コマンド早見表
+## 8. 全コマンド早見表
 
 | コマンド | 何をするか | 出力 |
 |---|---|---|
@@ -262,17 +332,17 @@ Date:   2026-06-09 15:30:00 +0900
 | `cntl config --all` | アクティブな設定をスコープつきで一覧 | `key(scope) "value"` × N |
 | `cntl config --all --verbose` | 上記 + 上書きされた値も表示 | 同上 + `shadowed: ...` 行 |
 | `cntl status` | 作業ツリーと HEAD の差分を表示 | `modified` / `new file` / `deleted` 各行 |
+| `cntl diff` | 作業ツリーと HEAD の内容差分を unified diff で表示 | `diff --cntl ...` ブロック × N |
 | `cntl commit -m "..."` | 全変更をまとめて 1 コミット | `[shorthash] message` |
 | `cntl log` | HEAD から親をたどって履歴表示 | コミットブロック × N |
 
 ---
 
-## 8. v0.1.0 でできないこと
+## 9. v0.1.0 でできないこと
 
 以下は意図的に未実装です。次のバージョンで入ります ([ロードマップ](../README.md#ロードマップ) 参照)。
 
 - ブランチ、`checkout`、`restore` — 単一履歴のみ
-- `diff` — `status` で変更ファイル名は出ますが、内容差分は出ません
 - `.cntlignore` — `.cntl/` 以外を除外するルールは未実装。一時ファイルもコミット対象になります
 - リモート操作 (`push` / `pull` / `fetch`) — ローカル完結
 - 2 層履歴のグルーピング — cntl の中核機能。v0.4.0 予定

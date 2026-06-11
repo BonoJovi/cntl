@@ -18,6 +18,7 @@
 | `cntl init` | ✅ | 新規リポジトリ作成 (`.cntl/repo.db` を生成) |
 | `cntl config <key> [value]` | ✅ | 著者情報設定 (グローバル / ローカル二層) |
 | `cntl status` | ✅ | 作業ツリーと HEAD の差分を表示 |
+| `cntl diff` | ✅ | 作業ツリーと HEAD の内容差分を unified diff 形式で表示 |
 | `cntl commit -m "..."` | ✅ | 全変更を自動ステージングして 1 コミット |
 | `cntl log` | ✅ | コミット履歴を表示 |
 
@@ -82,8 +83,8 @@ cntl log                         # → コミット履歴
 
 | Version | 内容 |
 |---|---|
-| **v0.1.0 (MVP)** ← 現在 | Walking skeleton: init / config / status / commit / log |
-| v0.2.0 | branch、checkout、restore、diff |
+| **v0.1.0 (MVP)** ← 現在 | Walking skeleton: init / config / status / diff / commit / log |
+| v0.2.0 | branch、checkout、restore |
 | v0.3.0 | conflict メタデータ分離 + TUI 解消モード |
 | v0.4.0 | 2 層履歴 (グルーピング)、branch-scoped タグ |
 | v0.5.0 | リモート操作 (push/pull/fetch) |

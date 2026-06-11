@@ -11,7 +11,7 @@
 
 ## 状態
 
-**v0.1.0 (MVP — Walking Skeleton)** — ローカルで単一履歴を記録できる最小限のセットが動作します。
+**v0.2.0 (開発中)** — v0.1.0 (MVP) のローカル単一履歴に加え、ブランチ管理が動作します。
 
 | コマンド | 状態 | 役割 |
 |---|---|---|
@@ -22,6 +22,8 @@
 | `cntl restore <path>...` | ✅ | 指定パスを HEAD の内容で復元 (変更の取り消し) |
 | `cntl commit -m "..."` | ✅ | 全変更を自動ステージングして 1 コミット |
 | `cntl log` | ✅ | コミット履歴を表示 |
+| `cntl branch [name] [-d]` | ✅ | ブランチの一覧 / 作成 / 削除 |
+| `cntl checkout <branch>` | ⏳ | ブランチ切り替え (v0.2.0 で実装予定) |
 
 ---
 
@@ -84,9 +86,9 @@ cntl log                         # → コミット履歴
 
 | Version | 内容 |
 |---|---|
-| **v0.1.0 (MVP)** ← 現在 | Walking skeleton: init / config / status / diff / restore / commit / log |
-| v0.2.0 | branch、checkout、`restore --source=<commit>` |
-| v0.3.0 | conflict メタデータ分離 + TUI 解消モード |
+| v0.1.0 (MVP) | Walking skeleton: init / config / status / diff / restore / commit / log |
+| **v0.2.0 ← 現在** | branch ✅ / checkout ⏳ / `restore --source=<commit>` ⏳ |
+| v0.3.0 | conflict メタデータ分離 + TUI 解消モード、inspect モード (detached HEAD 相当の明示モード — DR-002 参照) |
 | v0.4.0 | 2 層履歴 (グルーピング)、branch-scoped タグ |
 | v0.5.0 | リモート操作 (push/pull/fetch) |
 | 将来 | patch-based モデルへの移行 (Pijul/Darcs 風) |

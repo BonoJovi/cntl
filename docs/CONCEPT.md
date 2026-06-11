@@ -239,9 +239,9 @@ CREATE TABLE settings (
 
 | Version | 内容 |
 |---|---|
-| **v0.1.0 (MVP)** | Walking skeleton: init / config / status / commit / log |
-| v0.2.0 | branch、checkout、restore、diff |
-| v0.3.0 | conflict メタデータ分離 + TUI 解消モード |
+| v0.1.0 (MVP) | Walking skeleton: init / config / status / commit / log |
+| **v0.2.0 ← 開発中** | restore ✅ / diff ✅ / branch ✅ / checkout ⏳ — HEAD はシンボリック参照化済み ([DR-002](adr/DR-002-head-and-branches.md)) |
+| v0.3.0 | conflict メタデータ分離 + TUI 解消モード、inspect モード (detached HEAD 相当の明示モード) |
 | v0.4.0 | 2 層履歴 (グルーピング)、branch-scoped タグ |
 | v0.5.0 | リモート操作 (push/pull/fetch) |
 | 将来 | patch-based モデルへの移行 (Pijul/Darcs 風) |
@@ -273,5 +273,5 @@ CREATE TABLE settings (
 - コミットメッセージのフォーマット規約 (conventional commits か独自か)
 - ターゲットスケール (規模上限の想定)
 - 認証/転送プロトコル (v0.5 リモート設計時)
-- detached HEAD 相当のエラー状態の扱い (v0.2 branch 導入時)
+- inspect モードの具体 (名前 / 入退出コマンド / 内部で許可される操作) — 通常モードでは detached 不可とする方針は [DR-002](adr/DR-002-head-and-branches.md) で確定済み、具体は v0.3 までに別 DR で決定
 - `log` / `diff` 表示の粒度と既定 (実装時に決定)

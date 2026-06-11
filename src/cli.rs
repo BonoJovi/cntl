@@ -49,6 +49,13 @@ pub enum Command {
     /// Show unified diff between the working tree and HEAD
     Diff,
 
+    /// Restore working-tree files from HEAD
+    Restore {
+        /// Paths to restore (file paths only; directories not yet supported)
+        #[arg(required = true)]
+        paths: Vec<String>,
+    },
+
     /// Record a new commit with all current changes
     Commit {
         /// Commit message
@@ -81,6 +88,9 @@ pub fn run() -> Result<()> {
         }
         Command::Diff => {
             diff()?;
+        }
+        Command::Restore { paths } => {
+            restore(paths)?;
         }
         Command::Commit { message } => {
             commit(&message)?;
@@ -428,6 +438,59 @@ fn emit_diff(path: &str, old: Option<&[u8]>, new: Option<&[u8]>) {
 fn is_binary(bytes: &[u8]) -> bool {
     let check_len = bytes.len().min(8192);
     bytes[..check_len].contains(&0)
+}
+
+fn restore(paths: Vec<String>) -> Result<()> {
+    let repo_db = local_db_path_existing()?;
+    let conn = Connection::open(&repo_db)
+        .with_context(|| format!("failed to open {}", repo_db.display()))?;
+    let head_hash = match read_head(&conn)? {
+        Some(h) => h,
+        None => bail!("no commits yet"),
+    };
+    let head_commit = object::load_commit(&conn, &head_hash)?;
+
+    let mut head_files: std::collections::HashMap<String, ObjectHash> =
+        std::collections::HashMap::new();
+    collect_tree_files(&conn, &head_commit.tree, "", &mut head_files)?;
+
+    // Phase 1: validate all paths before touching the working tree.
+    let mut resolved: Vec<(String, ObjectHash)> = Vec::new();
+    for raw in &paths {
+        let path = normalize_restore_path(raw);
+        if let Some(hash) = head_files.get(&path) {
+            resolved.push((path, *hash));
+        } else if is_dir_in_head(&head_files, &path) {
+            bail!("{path}: is a directory (not yet supported)");
+        } else {
+            bail!("{path}: not in HEAD");
+        }
+    }
+
+    // Phase 2: write each file from its HEAD blob.
+    for (path, hash) in &resolved {
+        let blob = object::load_blob(&conn, hash)?;
+        let p = Path::new(path);
+        if let Some(parent) = p.parent() {
+            if !parent.as_os_str().is_empty() {
+                fs::create_dir_all(parent)
+                    .with_context(|| format!("failed to create parent of {path}"))?;
+            }
+        }
+        fs::write(p, &blob.data).with_context(|| format!("failed to write {path}"))?;
+    }
+
+    Ok(())
+}
+
+fn normalize_restore_path(p: &str) -> String {
+    let p = p.strip_prefix("./").unwrap_or(p);
+    p.trim_end_matches('/').to_string()
+}
+
+fn is_dir_in_head(files: &std::collections::HashMap<String, ObjectHash>, dir: &str) -> bool {
+    let prefix = format!("{dir}/");
+    files.keys().any(|k| k.starts_with(&prefix))
 }
 
 fn read_head(conn: &Connection) -> Result<Option<ObjectHash>> {

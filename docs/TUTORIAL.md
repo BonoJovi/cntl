@@ -292,7 +292,84 @@ Binary files a/image.png and b/image.png differ
 
 ---
 
-## 7. 履歴を見る — `cntl log`
+## 7. 取り消す — `cntl restore`
+
+作業中に「やっぱり今の変更を捨てたい」「うっかり消したファイルを戻したい」というとき、`cntl restore` を使います。指定したパスを **HEAD の状態に戻す** (＝最後のコミット時点の内容で上書き) コマンドです。
+
+### 7.1 編集を取り消す
+
+```bash
+echo "壊れた内容" > README.md
+cntl diff
+```
+
+```
+diff --cntl a/README.md b/README.md
+--- a/README.md
++++ b/README.md
+@@ -1 +1 @@
+-hello cntl
++壊れた内容
+```
+
+```bash
+cntl restore README.md
+cntl diff
+# → (何も出ない、HEAD と一致)
+```
+
+成功時は何も出力しません (`git restore` と同じ静かな成功)。
+
+### 7.2 消したファイルを戻す
+
+ファイルそのものが消えていても、HEAD に存在していれば復元できます。
+
+```bash
+rm docs/TUTORIAL.md
+cntl status
+```
+
+```
+Changes since last commit:
+	deleted:    docs/TUTORIAL.md
+```
+
+```bash
+cntl restore docs/TUTORIAL.md
+cntl status
+# → nothing to commit, working tree clean
+```
+
+親ディレクトリ (`docs/` 自体) が消えていても自動的に作り直されます。
+
+### 7.3 複数パスを一度に
+
+引数は何個でも渡せます。
+
+```bash
+cntl restore README.md docs/TUTORIAL.md
+```
+
+### 7.4 「半分だけ復元」は起きない
+
+引数を **すべて先に検証** してから書き込みに入る 2 フェーズ方式です。
+
+```bash
+cntl restore README.md not-existing.txt
+# → Error: not-existing.txt: not in HEAD
+# README.md には触らない (作業ツリーは変化なし)
+```
+
+1 つでも HEAD に無いパスが混ざっていたら、その時点で全体を中止します。
+
+> **詰まりポイント**:
+> - **ディレクトリ指定はまだサポートしていません** (`cntl restore docs` → `is a directory (not yet supported)`)。ディレクトリ以下を一括 restore するには、ファイル名を 1 つずつ列挙してください。
+> - **任意コミットからの restore** (`git restore --source=<rev>`) は v0.2.0 以降の予定です。今は常に HEAD から。
+> - **コミット 0 個の状態では使えません** (`no commits yet`)。
+
+---
+
+## 8. 履歴を見る — `cntl log`
 
 ```bash
 cntl log
@@ -321,7 +398,7 @@ Date:   2026-06-09 15:30:00 +0900
 
 ---
 
-## 8. 全コマンド早見表
+## 9. 全コマンド早見表
 
 | コマンド | 何をするか | 出力 |
 |---|---|---|
@@ -333,16 +410,19 @@ Date:   2026-06-09 15:30:00 +0900
 | `cntl config --all --verbose` | 上記 + 上書きされた値も表示 | 同上 + `shadowed: ...` 行 |
 | `cntl status` | 作業ツリーと HEAD の差分を表示 | `modified` / `new file` / `deleted` 各行 |
 | `cntl diff` | 作業ツリーと HEAD の内容差分を unified diff で表示 | `diff --cntl ...` ブロック × N |
+| `cntl restore <path>...` | 指定パスを HEAD の内容で復元 (作業ツリー変更の取り消し) | (なし) |
 | `cntl commit -m "..."` | 全変更をまとめて 1 コミット | `[shorthash] message` |
 | `cntl log` | HEAD から親をたどって履歴表示 | コミットブロック × N |
 
 ---
 
-## 9. v0.1.0 でできないこと
+## 10. v0.1.0 でできないこと
 
 以下は意図的に未実装です。次のバージョンで入ります ([ロードマップ](../README.md#ロードマップ) 参照)。
 
-- ブランチ、`checkout`、`restore` — 単一履歴のみ
+- ブランチ、`checkout` — 単一履歴のみ
+- `cntl restore --source=<commit> <path>` — 任意のコミットからの復元。現在は HEAD からのみ
+- `cntl restore` のディレクトリ指定 — 1 ファイルずつのみサポート
 - `.cntlignore` — `.cntl/` 以外を除外するルールは未実装。一時ファイルもコミット対象になります
 - リモート操作 (`push` / `pull` / `fetch`) — ローカル完結
 - 2 層履歴のグルーピング — cntl の中核機能。v0.4.0 予定

@@ -65,6 +65,16 @@ pub enum Command {
 
     /// Show commit history
     Log,
+
+    /// List, create, or delete branches
+    Branch {
+        /// Branch name (omit to list all branches)
+        name: Option<String>,
+
+        /// Delete the named branch (cannot be the current branch)
+        #[arg(short = 'd', long = "delete", requires = "name")]
+        delete: bool,
+    },
 }
 
 pub fn run() -> Result<()> {
@@ -98,10 +108,23 @@ pub fn run() -> Result<()> {
         Command::Log => {
             log()?;
         }
+        Command::Branch { name, delete } => {
+            branch(name, delete)?;
+        }
     }
 
     Ok(())
 }
+
+/// Schema version stored in `settings`. Bumped whenever the on-disk shape
+/// changes in a way older versions of cntl cannot read.
+const SCHEMA_VERSION: &str = "2";
+
+/// Default branch name created at the first commit of a fresh repository.
+const DEFAULT_BRANCH: &str = "main";
+
+/// All branch refs live under this prefix in the `refs` table.
+const BRANCH_REF_PREFIX: &str = "refs/heads/";
 
 const SCHEMA_SQL: &str = "\
 CREATE TABLE objects (
@@ -112,6 +135,10 @@ CREATE TABLE objects (
 CREATE TABLE refs (
     name   TEXT PRIMARY KEY,
     target BLOB NOT NULL
+);
+CREATE TABLE head (
+    id       INTEGER PRIMARY KEY CHECK (id = 1),
+    ref_name TEXT NOT NULL
 );
 CREATE TABLE settings (
     key   TEXT PRIMARY KEY,
@@ -132,8 +159,89 @@ fn init() -> Result<()> {
     conn.execute_batch(SCHEMA_SQL)
         .context("failed to initialize repo.db schema")?;
 
+    let default_ref = format!("{BRANCH_REF_PREFIX}{DEFAULT_BRANCH}");
+    conn.execute(
+        "INSERT INTO head (id, ref_name) VALUES (1, ?1)",
+        params![default_ref],
+    )
+    .context("failed to initialize HEAD")?;
+    conn.execute(
+        "INSERT INTO settings (key, value) VALUES ('schema_version', ?1)",
+        params![SCHEMA_VERSION],
+    )
+    .context("failed to record schema version")?;
+
     let shown = fs::canonicalize(&cntl_dir).unwrap_or(cntl_dir);
     println!("Initialized empty cntl repository in {}", shown.display());
+    Ok(())
+}
+
+/// Open the repository DB and bring it up to the current schema if needed.
+///
+/// v0.1.0 stored `HEAD` as a row in `refs` whose `target` was a commit hash.
+/// v0.2.0 introduces a dedicated `head` table holding a symbolic ref name,
+/// and rewrites the legacy `HEAD` row as `refs/heads/main`.
+fn open_repo(path: &Path) -> Result<Connection> {
+    let conn = Connection::open(path)
+        .with_context(|| format!("failed to open {}", path.display()))?;
+    migrate_to_v2(&conn)?;
+    Ok(conn)
+}
+
+fn migrate_to_v2(conn: &Connection) -> Result<()> {
+    let has_head_table: bool = conn
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='head')",
+            [],
+            |row| row.get(0),
+        )
+        .context("failed to inspect schema")?;
+    if has_head_table {
+        return Ok(());
+    }
+
+    let tx_conn = conn;
+    tx_conn.execute_batch(
+        "CREATE TABLE head (
+            id       INTEGER PRIMARY KEY CHECK (id = 1),
+            ref_name TEXT NOT NULL
+        );",
+    )
+    .context("failed to create head table")?;
+
+    let default_ref = format!("{BRANCH_REF_PREFIX}{DEFAULT_BRANCH}");
+    let legacy_head: Option<Vec<u8>> = tx_conn
+        .query_row(
+            "SELECT target FROM refs WHERE name = 'HEAD'",
+            [],
+            |row| row.get(0),
+        )
+        .optional()
+        .context("failed to read legacy HEAD")?;
+    if let Some(commit_hash) = legacy_head {
+        tx_conn
+            .execute("DELETE FROM refs WHERE name = 'HEAD'", [])
+            .context("failed to delete legacy HEAD row")?;
+        tx_conn
+            .execute(
+                "INSERT INTO refs (name, target) VALUES (?1, ?2)",
+                params![default_ref, commit_hash],
+            )
+            .context("failed to install migrated branch ref")?;
+    }
+    tx_conn
+        .execute(
+            "INSERT INTO head (id, ref_name) VALUES (1, ?1)",
+            params![default_ref],
+        )
+        .context("failed to install HEAD row")?;
+    tx_conn
+        .execute(
+            "INSERT INTO settings (key, value) VALUES ('schema_version', ?1)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![SCHEMA_VERSION],
+        )
+        .context("failed to record schema version")?;
     Ok(())
 }
 
@@ -305,8 +413,7 @@ fn local_db_path_existing() -> Result<PathBuf> {
 
 fn status() -> Result<()> {
     let repo_db = local_db_path_existing()?;
-    let conn = Connection::open(&repo_db)
-        .with_context(|| format!("failed to open {}", repo_db.display()))?;
+    let conn = open_repo(&repo_db)?;
     let head = read_head(&conn)?;
     let files = scan_working_tree(Path::new("."))?;
 
@@ -366,8 +473,7 @@ fn status() -> Result<()> {
 
 fn diff() -> Result<()> {
     let repo_db = local_db_path_existing()?;
-    let conn = Connection::open(&repo_db)
-        .with_context(|| format!("failed to open {}", repo_db.display()))?;
+    let conn = open_repo(&repo_db)?;
     let head = read_head(&conn)?;
     let files = scan_working_tree(Path::new("."))?;
 
@@ -442,8 +548,7 @@ fn is_binary(bytes: &[u8]) -> bool {
 
 fn restore(paths: Vec<String>) -> Result<()> {
     let repo_db = local_db_path_existing()?;
-    let conn = Connection::open(&repo_db)
-        .with_context(|| format!("failed to open {}", repo_db.display()))?;
+    let conn = open_repo(&repo_db)?;
     let head_hash = match read_head(&conn)? {
         Some(h) => h,
         None => bail!("no commits yet"),
@@ -493,23 +598,40 @@ fn is_dir_in_head(files: &std::collections::HashMap<String, ObjectHash>, dir: &s
     files.keys().any(|k| k.starts_with(&prefix))
 }
 
+/// Read the branch ref that HEAD points at.
+///
+/// HEAD is a symbolic reference (see DR-002). The post-v0.2.0 invariant is
+/// that exactly one row exists in the `head` table.
+fn read_head_ref(conn: &Connection) -> Result<String> {
+    conn.query_row("SELECT ref_name FROM head WHERE id = 1", [], |row| row.get(0))
+        .context("failed to read HEAD")
+}
+
+/// Resolve HEAD to the commit it points at, or `None` if the branch ref
+/// does not exist yet (i.e. no commits have been made).
 fn read_head(conn: &Connection) -> Result<Option<ObjectHash>> {
+    let head_ref = read_head_ref(conn)?;
+    read_ref(conn, &head_ref)
+}
+
+/// Read an arbitrary ref by name; returns `None` if the ref does not exist.
+fn read_ref(conn: &Connection, name: &str) -> Result<Option<ObjectHash>> {
     conn.query_row(
-        "SELECT target FROM refs WHERE name = 'HEAD'",
-        [],
+        "SELECT target FROM refs WHERE name = ?1",
+        params![name],
         |row| {
             let bytes: Vec<u8> = row.get(0)?;
             bytes.try_into().map_err(|_| {
                 rusqlite::Error::FromSqlConversionFailure(
                     0,
                     rusqlite::types::Type::Blob,
-                    "HEAD target is not a 32-byte hash".into(),
+                    format!("ref {name} target is not a 32-byte hash").into(),
                 )
             })
         },
     )
     .optional()
-    .context("failed to read HEAD")
+    .with_context(|| format!("failed to read ref {name}"))
 }
 
 fn collect_tree_files(
@@ -564,12 +686,12 @@ fn commit(message: &str) -> Result<()> {
         anyhow::anyhow!("user.email not configured (run `cntl config user.email \"...\"`)")
     })?;
 
-    let mut conn = Connection::open(&repo_db)
-        .with_context(|| format!("failed to open {}", repo_db.display()))?;
+    let mut conn = open_repo(&repo_db)?;
     let tx = conn.transaction().context("failed to begin transaction")?;
 
     let tree_hash = write_tree_recursive(&tx, Path::new("."))?;
-    let parent = read_head(&tx)?;
+    let head_ref = read_head_ref(&tx)?;
+    let parent = read_ref(&tx, &head_ref)?;
 
     let commit_obj = Commit {
         parent,
@@ -584,11 +706,11 @@ fn commit(message: &str) -> Result<()> {
     object::store_object(&tx, &commit_hash, "commit", &commit_bytes)?;
 
     tx.execute(
-        "INSERT INTO refs (name, target) VALUES ('HEAD', ?1)
+        "INSERT INTO refs (name, target) VALUES (?1, ?2)
          ON CONFLICT(name) DO UPDATE SET target = excluded.target",
-        params![&commit_hash[..]],
+        params![head_ref, &commit_hash[..]],
     )
-    .context("failed to update HEAD")?;
+    .context("failed to advance branch ref")?;
 
     tx.commit().context("failed to commit transaction")?;
 
@@ -643,10 +765,105 @@ fn write_tree_recursive(conn: &Connection, dir: &Path) -> Result<ObjectHash> {
     Ok(hash)
 }
 
+fn branch(name: Option<String>, delete: bool) -> Result<()> {
+    let repo_db = local_db_path_existing()?;
+    let conn = open_repo(&repo_db)?;
+
+    match (name, delete) {
+        (None, _) => branch_list(&conn),
+        (Some(n), false) => branch_create(&conn, &n),
+        (Some(n), true) => branch_delete(&conn, &n),
+    }
+}
+
+fn branch_list(conn: &Connection) -> Result<()> {
+    let current = read_head_ref(conn)?;
+    let mut stmt = conn
+        .prepare("SELECT name FROM refs WHERE name LIKE 'refs/heads/%' ORDER BY name")
+        .context("failed to prepare branch list query")?;
+    let rows = stmt
+        .query_map([], |row| row.get::<_, String>(0))
+        .context("failed to query branches")?;
+
+    let mut any = false;
+    for row in rows {
+        let full = row.context("failed to read branch row")?;
+        let short = full.strip_prefix(BRANCH_REF_PREFIX).unwrap_or(&full);
+        let marker = if full == current { "*" } else { " " };
+        println!("{marker} {short}");
+        any = true;
+    }
+
+    if !any {
+        let current_short = current.strip_prefix(BRANCH_REF_PREFIX).unwrap_or(&current);
+        println!("No branches yet (HEAD will become '{current_short}' at first commit).");
+    }
+    Ok(())
+}
+
+fn branch_create(conn: &Connection, name: &str) -> Result<()> {
+    validate_branch_name(name)?;
+    let full = format!("{BRANCH_REF_PREFIX}{name}");
+
+    let exists: bool = conn
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM refs WHERE name = ?1)",
+            params![full],
+            |row| row.get(0),
+        )
+        .context("failed to check existing branch")?;
+    if exists {
+        bail!("branch '{name}' already exists");
+    }
+
+    let head_hash = read_head(conn)?
+        .ok_or_else(|| anyhow::anyhow!("no commits yet — cannot create a branch"))?;
+
+    conn.execute(
+        "INSERT INTO refs (name, target) VALUES (?1, ?2)",
+        params![full, &head_hash[..]],
+    )
+    .context("failed to create branch ref")?;
+    Ok(())
+}
+
+fn branch_delete(conn: &Connection, name: &str) -> Result<()> {
+    validate_branch_name(name)?;
+    let full = format!("{BRANCH_REF_PREFIX}{name}");
+
+    let current = read_head_ref(conn)?;
+    if full == current {
+        bail!("cannot delete branch '{name}': it is the current branch");
+    }
+
+    let deleted = conn
+        .execute("DELETE FROM refs WHERE name = ?1", params![full])
+        .context("failed to delete branch ref")?;
+    if deleted == 0 {
+        bail!("branch '{name}' not found");
+    }
+    Ok(())
+}
+
+fn validate_branch_name(name: &str) -> Result<()> {
+    if name.is_empty() {
+        bail!("branch name cannot be empty");
+    }
+    if name.starts_with('-') {
+        bail!("branch name cannot start with '-'");
+    }
+    if name == "." || name == ".." {
+        bail!("branch name cannot be '.' or '..'");
+    }
+    if name.chars().any(|c| c.is_control() || c == '/' || c == ' ' || c == '\t') {
+        bail!("branch name contains invalid characters (no '/', spaces, or control chars)");
+    }
+    Ok(())
+}
+
 fn log() -> Result<()> {
     let repo_db = local_db_path_existing()?;
-    let conn = Connection::open(&repo_db)
-        .with_context(|| format!("failed to open {}", repo_db.display()))?;
+    let conn = open_repo(&repo_db)?;
 
     let Some(head_hash) = read_head(&conn)? else {
         bail!("no commits yet");

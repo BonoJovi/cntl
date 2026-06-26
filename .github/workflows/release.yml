@@ -1,0 +1,83 @@
+name: Release
+
+# Build native binaries for each supported platform and attach them to the
+# GitHub Release whenever a version tag (e.g. v0.2.0) is pushed.
+# `workflow_dispatch` allows a manual build-only run (no upload) for testing.
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: macos-13
+            target: x86_64-apple-darwin
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # edition 2024 requires a recent stable; @stable always resolves to the
+      # latest stable release, which covers it.
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      # --locked guarantees the committed Cargo.lock is used as-is.
+      # rusqlite's "bundled" feature compiles SQLite from C source, so each
+      # runner's native C toolchain (gcc / clang / MSVC) is relied upon — this
+      # is why the matrix uses native runners rather than cross-compilation.
+      - name: Build release binary
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      - name: Package (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          dist="cntl-${{ github.ref_name }}-${{ matrix.target }}"
+          mkdir "$dist"
+          cp "target/${{ matrix.target }}/release/cntl" "$dist/"
+          cp README.md LICENSE "$dist/"
+          tar -czf "$dist.tar.gz" "$dist"
+          echo "ASSET=$dist.tar.gz" >> "$GITHUB_ENV"
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          dist="cntl-${{ github.ref_name }}-${{ matrix.target }}"
+          mkdir "$dist"
+          cp "target/${{ matrix.target }}/release/cntl.exe" "$dist/"
+          cp README.md LICENSE "$dist/"
+          7z a "$dist.zip" "$dist"
+          echo "ASSET=$dist.zip" >> "$GITHUB_ENV"
+
+      # Only publish assets on a real tag push; manual dispatch builds stay
+      # build-only so the workflow can be smoke-tested without a release.
+      - name: Upload to release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ env.ASSET }}
+          fail_on_unmatched_files: true

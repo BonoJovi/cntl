@@ -424,7 +424,7 @@ No branches yet (HEAD will become 'main' at first commit).
 
 ### 9.2 ブランチを作る — `cntl branch <name>`
 
-現在の HEAD commit を基点に、新しいブランチを作成します。**作成だけで、切り替えはしません** (切り替えは将来の `cntl checkout` で。v0.2.0 では未実装)。
+現在の HEAD commit を基点に、新しいブランチを作成します。**作成だけで、切り替えはしません** (切り替えは 9.6 の `cntl checkout`)。
 
 ```bash
 cntl branch feature-login
@@ -468,7 +468,7 @@ cntl branch
 > **詰まりポイント**:
 > - **先頭が `-` の名前**: `cntl branch -x` のように打つと clap が `-x` をオプションとして解釈しようとして、cntl の検証より手前で蹴られます。どうしても先頭 `-` を使いたい場合は `cntl branch -- -x` と書きますが、おすすめしません。
 > - **初コミット前の `cntl branch <name>`**: `no commits yet — cannot create a branch` で止まります。基にする commit が無いためです。手順 4 に戻ってまず 1 つコミットしてください。
-> - **現在いるブランチを `-d` で消す**: `cannot delete branch '<name>': it is the current branch` で止まります。これは安全側の制約で、HEAD が指すブランチ ref が消える状態を構造的に防いでいます ([DR-002](adr/DR-002-head-and-branches.md) D3 不変条件)。先に別ブランチを作ってそちらに切り替えてから消す、というのが正規ルートになります (`checkout` の実装後に手順化予定)。
+> - **現在いるブランチを `-d` で消す**: `cannot delete branch '<name>': it is the current branch` で止まります。これは安全側の制約で、HEAD が指すブランチ ref が消える状態を構造的に防いでいます ([DR-002](adr/DR-002-head-and-branches.md) D3 不変条件)。先に別ブランチを作ってそちらに切り替えてから消す、というのが正規ルートになります (9.6 の `cntl checkout` 参照)。
 
 ### 9.5 ブランチを作っただけでは履歴は分岐しない
 
@@ -482,7 +482,59 @@ cntl branch
        feature (新規作成、同じ commit を指す)
 ```
 
-`main` と `feature` は **同じ commit C を指している 2 つの名前付きポインタ** にすぎません。実際の履歴分岐は、片方のブランチに切り替えてから新しい commit を打ったときに発生します。それは `cntl checkout` の実装後に詳述します。
+`main` と `feature` は **同じ commit C を指している 2 つの名前付きポインタ** にすぎません。実際の履歴分岐は、片方のブランチに切り替えてから新しい commit を打ったときに発生します。それを次の 9.6 で実際にやってみます。
+
+### 9.6 ブランチを切り替える — `cntl checkout <branch>`
+
+作成したブランチに切り替えます。`cntl checkout` がやることは 2 つだけです:
+
+1. **HEAD の向きを変える** — `HEAD` が指すブランチ ref を、対象ブランチに張り替える
+2. **作業ツリーを合わせる** — 作業ツリーのファイルを、対象ブランチの commit の内容に一致させる (差分のあるファイルだけ書き換え/削除し、空になったディレクトリも片付けます)
+
+```bash
+cntl branch feature
+cntl checkout feature
+```
+
+```
+Switched to branch 'feature'
+```
+
+切り替えた状態で commit すると、`feature` だけが前進し、`main` はその場に留まります。ここで初めて履歴が分岐します:
+
+```
+              feature (current, HEAD)
+               ↓
+  commit D ← commit C ← commit B ← commit A
+               ↑
+             main
+```
+
+#### 未コミットの変更があると切り替えを拒否する
+
+cntl は、作業ツリーに未コミットの変更があるまま checkout すると **切り替えを拒否** します。これは「切り替えで作業を黙って失う」事故を構造的に防ぐためです ([DR-002](adr/DR-002-head-and-branches.md) の設計線。conflict marker を埋めない・detached を作らないのと同じ「壊さない」原則)。
+
+```bash
+echo "編集中..." >> a.txt
+cntl checkout main
+```
+
+```
+Error: working tree has uncommitted changes
+  modified: a.txt
+hint: commit them first, then checkout
+```
+
+対処は単純で、**先に `cntl commit` する** か、**`cntl restore` で変更を捨てる** かのどちらかです。きれいな状態に戻してから切り替えれば通ります。
+
+#### detached HEAD は無い
+
+Git の `git checkout <commit-hash>` のような「ブランチから外れて任意 commit に乗る」操作は cntl の通常モードには **ありません**。`cntl checkout` が受け付けるのは **ブランチ名だけ** です。任意 commit を見る手段は将来の inspect モード (v0.3.0 予定) に分離されます ([DR-002](adr/DR-002-head-and-branches.md) D3)。
+
+> **詰まりポイント**:
+> - **既にそのブランチにいる**: `Already on '<name>'` と表示して何もしません (作業ツリーには触れません)。
+> - **存在しないブランチ名**: `branch '<name>' not found` で止まります。先に `cntl branch <name>` で作ってください。
+> - **初コミット前**: ブランチがまだ 1 つも無いので、`branch ... not found` になります。
 
 ---
 
@@ -504,6 +556,7 @@ cntl branch
 | `cntl branch` | ブランチ一覧 (現在のブランチに `*`) | `* main` などの行 × N |
 | `cntl branch <name>` | HEAD commit を基点に新規ブランチを作成 | (なし) |
 | `cntl branch -d <name>` | ブランチを削除 (現在のブランチは不可) | (なし) |
+| `cntl checkout <branch>` | 対象ブランチに切り替え、作業ツリーを一致させる | `Switched to branch '<name>'` |
 
 ---
 
@@ -511,7 +564,6 @@ cntl branch
 
 以下は意図的に未実装です。次のバージョンで入ります ([ロードマップ](../README.md#ロードマップ) 参照)。
 
-- `cntl checkout <branch>` — ブランチ切り替え。v0.2.0 で実装予定 (`branch` は作るところまで)
 - `cntl restore --source=<commit> <path>` — 任意のコミットからの復元。現在は HEAD からのみ
 - `cntl restore` のディレクトリ指定 — 1 ファイルずつのみサポート
 - `.cntlignore` — `.cntl/` 以外を除外するルールは未実装。一時ファイルもコミット対象になります

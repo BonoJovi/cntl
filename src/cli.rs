@@ -75,6 +75,12 @@ pub enum Command {
         #[arg(short = 'd', long = "delete", requires = "name")]
         delete: bool,
     },
+
+    /// Switch to another branch, updating the working tree to match
+    Checkout {
+        /// Branch to switch to
+        name: String,
+    },
 }
 
 pub fn run() -> Result<()> {
@@ -110,6 +116,9 @@ pub fn run() -> Result<()> {
         }
         Command::Branch { name, delete } => {
             branch(name, delete)?;
+        }
+        Command::Checkout { name } => {
+            checkout(&name)?;
         }
     }
 
@@ -431,16 +440,57 @@ fn status() -> Result<()> {
         return Ok(());
     };
 
-    let head_commit = object::load_commit(&conn, &head_hash)?;
+    let changes = compute_working_changes(&conn, Some(&head_hash), &files)?;
+    if changes.is_clean() {
+        println!("nothing to commit, working tree clean");
+        return Ok(());
+    }
+
+    println!("Changes since last commit:");
+    for path in &changes.modified {
+        println!("\tmodified:   {path}");
+    }
+    for path in &changes.new_files {
+        println!("\tnew file:   {path}");
+    }
+    for path in &changes.deleted {
+        println!("\tdeleted:    {path}");
+    }
+    Ok(())
+}
+
+/// Difference between the working tree and a commit's tree, classified the
+/// same way `cntl status` reports it.
+struct WorkingChanges {
+    modified: Vec<String>,
+    new_files: Vec<String>,
+    deleted: Vec<String>,
+}
+
+impl WorkingChanges {
+    fn is_clean(&self) -> bool {
+        self.modified.is_empty() && self.new_files.is_empty() && self.deleted.is_empty()
+    }
+}
+
+/// Compare the scanned working-tree `files` against the tree of `head`
+/// (or the empty tree when `head` is `None`, i.e. before the first commit).
+fn compute_working_changes(
+    conn: &Connection,
+    head: Option<&ObjectHash>,
+    files: &[String],
+) -> Result<WorkingChanges> {
     let mut head_files: std::collections::HashMap<String, ObjectHash> =
         std::collections::HashMap::new();
-    collect_tree_files(&conn, &head_commit.tree, "", &mut head_files)?;
+    if let Some(head_hash) = head {
+        let head_commit = object::load_commit(conn, head_hash)?;
+        collect_tree_files(conn, &head_commit.tree, "", &mut head_files)?;
+    }
 
     let mut modified = Vec::new();
     let mut new_files = Vec::new();
-    let mut deleted = Vec::new();
 
-    for path in &files {
+    for path in files {
         let data = fs::read(path).with_context(|| format!("failed to read {path}"))?;
         let blob = Blob { data };
         let wt_hash = object::hash_bytes(&object::encode(&blob)?);
@@ -450,25 +500,14 @@ fn status() -> Result<()> {
             None => new_files.push(path.clone()),
         }
     }
-    deleted.extend(head_files.into_keys());
+    let mut deleted: Vec<String> = head_files.into_keys().collect();
     deleted.sort();
 
-    if modified.is_empty() && new_files.is_empty() && deleted.is_empty() {
-        println!("nothing to commit, working tree clean");
-        return Ok(());
-    }
-
-    println!("Changes since last commit:");
-    for path in &modified {
-        println!("\tmodified:   {path}");
-    }
-    for path in &new_files {
-        println!("\tnew file:   {path}");
-    }
-    for path in &deleted {
-        println!("\tdeleted:    {path}");
-    }
-    Ok(())
+    Ok(WorkingChanges {
+        modified,
+        new_files,
+        deleted,
+    })
 }
 
 fn diff() -> Result<()> {
@@ -859,6 +898,114 @@ fn validate_branch_name(name: &str) -> Result<()> {
         bail!("branch name contains invalid characters (no '/', spaces, or control chars)");
     }
     Ok(())
+}
+
+fn checkout(name: &str) -> Result<()> {
+    validate_branch_name(name)?;
+    let repo_db = local_db_path_existing()?;
+    let conn = open_repo(&repo_db)?;
+
+    let target_ref = format!("{BRANCH_REF_PREFIX}{name}");
+    let Some(target_commit) = read_ref(&conn, &target_ref)? else {
+        bail!("branch '{name}' not found");
+    };
+
+    let current_ref = read_head_ref(&conn)?;
+    if current_ref == target_ref {
+        println!("Already on '{name}'");
+        return Ok(());
+    }
+
+    // DR-002: switching branches must never silently discard work. Refuse the
+    // checkout unless the working tree is clean relative to the current branch.
+    let current_commit = read_ref(&conn, &current_ref)?;
+    let files = scan_working_tree(Path::new("."))?;
+    let changes = compute_working_changes(&conn, current_commit.as_ref(), &files)?;
+    if !changes.is_clean() {
+        bail!("{}", dirty_checkout_message(&changes));
+    }
+
+    // The working tree is now known to match the current branch's commit
+    // exactly, so the file set on disk is precisely `current_files`. Move it to
+    // `target_files`, touching only the paths whose content actually differs.
+    let mut current_files: std::collections::HashMap<String, ObjectHash> =
+        std::collections::HashMap::new();
+    if let Some(commit_hash) = &current_commit {
+        let commit = object::load_commit(&conn, commit_hash)?;
+        collect_tree_files(&conn, &commit.tree, "", &mut current_files)?;
+    }
+    let mut target_files: std::collections::HashMap<String, ObjectHash> =
+        std::collections::HashMap::new();
+    let target = object::load_commit(&conn, &target_commit)?;
+    collect_tree_files(&conn, &target.tree, "", &mut target_files)?;
+
+    for (path, hash) in &target_files {
+        if current_files.get(path) == Some(hash) {
+            continue;
+        }
+        let blob = object::load_blob(&conn, hash)?;
+        let p = Path::new(path);
+        if let Some(parent) = p.parent() {
+            if !parent.as_os_str().is_empty() {
+                fs::create_dir_all(parent)
+                    .with_context(|| format!("failed to create parent of {path}"))?;
+            }
+        }
+        fs::write(p, &blob.data).with_context(|| format!("failed to write {path}"))?;
+    }
+
+    for path in current_files.keys() {
+        if target_files.contains_key(path) {
+            continue;
+        }
+        let p = Path::new(path);
+        fs::remove_file(p).with_context(|| format!("failed to remove {path}"))?;
+        remove_empty_parents(p);
+    }
+
+    conn.execute(
+        "UPDATE head SET ref_name = ?1 WHERE id = 1",
+        params![target_ref],
+    )
+    .context("failed to update HEAD")?;
+
+    println!("Switched to branch '{name}'");
+    Ok(())
+}
+
+/// Build the multi-line error shown when a checkout is refused because the
+/// working tree has uncommitted changes.
+fn dirty_checkout_message(changes: &WorkingChanges) -> String {
+    use std::fmt::Write;
+    let mut msg = String::from("working tree has uncommitted changes");
+    for path in &changes.modified {
+        let _ = write!(msg, "\n  modified: {path}");
+    }
+    for path in &changes.new_files {
+        let _ = write!(msg, "\n  new file: {path}");
+    }
+    for path in &changes.deleted {
+        let _ = write!(msg, "\n  deleted:  {path}");
+    }
+    msg.push_str("\nhint: commit them first, then checkout");
+    msg
+}
+
+/// Remove now-empty parent directories of a just-deleted file, walking upward
+/// until a non-empty directory (or the working-tree root) is reached.
+fn remove_empty_parents(path: &Path) {
+    let mut dir = path.parent();
+    while let Some(d) = dir {
+        if d.as_os_str().is_empty() {
+            break;
+        }
+        // `remove_dir` only succeeds on an empty directory; any error (not
+        // empty, already gone, permission) is the natural stopping point.
+        if fs::remove_dir(d).is_err() {
+            break;
+        }
+        dir = d.parent();
+    }
 }
 
 fn log() -> Result<()> {

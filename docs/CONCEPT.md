@@ -240,7 +240,7 @@ CREATE TABLE settings (
 | Version | 内容 |
 |---|---|
 | v0.1.0 (MVP) | Walking skeleton: init / config / status / commit / log |
-| **v0.2.0 ← 開発中** | restore ✅ / diff ✅ / branch ✅ / checkout ⏳ — HEAD はシンボリック参照化済み ([DR-002](adr/DR-002-head-and-branches.md)) |
+| **v0.2.0 ← 開発中** | restore ✅ / diff ✅ / branch ✅ / checkout ✅ — HEAD はシンボリック参照化済み ([DR-002](adr/DR-002-head-and-branches.md)) |
 | v0.3.0 | conflict メタデータ分離 + TUI 解消モード、inspect モード (detached HEAD 相当の明示モード) |
 | v0.4.0 | 2 層履歴 (グルーピング)、branch-scoped タグ |
 | v0.5.0 | リモート操作 (push/pull/fetch) |

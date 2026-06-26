@@ -240,11 +240,15 @@ CREATE TABLE settings (
 | Version | 内容 |
 |---|---|
 | v0.1.0 (MVP) | Walking skeleton: init / config / status / commit / log |
-| **v0.2.0 ← 開発中** | restore ✅ / diff ✅ / branch ✅ / checkout ✅ — HEAD はシンボリック参照化済み ([DR-002](adr/DR-002-head-and-branches.md)) |
-| v0.3.0 | conflict メタデータ分離 + TUI 解消モード、inspect モード (detached HEAD 相当の明示モード) |
-| v0.4.0 | 2 層履歴 (グルーピング)、branch-scoped タグ |
-| v0.5.0 | リモート操作 (push/pull/fetch) |
+| v0.2.0 ✅ | ブランチ操作: restore / diff / branch / checkout — HEAD はシンボリック参照化済み ([DR-002](adr/DR-002-head-and-branches.md)) |
+| **v0.3.0 ← 次** | merge (conflict 無し版): fast-forward + 非衝突統合 |
+| v0.4.0 | conflict 解消: メタデータ分離 + TUI 解消モード |
+| v0.5.0 | inspect モード (任意 commit の明示的閲覧、detached HEAD 相当) + `restore --source=<commit>` |
+| v0.6.0 | 2 層履歴 (グルーピング)、branch-scoped タグ |
+| v0.7.0 | リモート操作 (push/pull/fetch) |
 | 将来 | patch-based モデルへの移行 (Pijul/Darcs 風) |
+
+> **merge と conflict を別版に分ける理由**: merge は「ブランチの統合」、conflict 解消は「統合時に生じた競合の処理」で、責務が異なる。先に統合の骨格 (fast-forward + 非衝突ケース) を v0.3.0 で固め、競合処理 (メタデータ分離 + TUI) を v0.4.0 で別途載せる。版を分けることで、万一の不具合の切り分け範囲を局所化できる。
 
 ---
 

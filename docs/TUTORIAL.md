@@ -529,7 +529,7 @@ hint: commit them first, then checkout
 
 #### detached HEAD は無い
 
-Git の `git checkout <commit-hash>` のような「ブランチから外れて任意 commit に乗る」操作は cntl の通常モードには **ありません**。`cntl checkout` が受け付けるのは **ブランチ名だけ** です。任意 commit を見る手段は将来の inspect モード (v0.3.0 予定) に分離されます ([DR-002](adr/DR-002-head-and-branches.md) D3)。
+Git の `git checkout <commit-hash>` のような「ブランチから外れて任意 commit に乗る」操作は cntl の通常モードには **ありません**。`cntl checkout` が受け付けるのは **ブランチ名だけ** です。任意 commit を見る手段は将来の inspect モード (v0.5.0 予定) に分離されます ([DR-002](adr/DR-002-head-and-branches.md) D3)。
 
 > **詰まりポイント**:
 > - **既にそのブランチにいる**: `Already on '<name>'` と表示して何もしません (作業ツリーには触れません)。
@@ -567,9 +567,11 @@ Git の `git checkout <commit-hash>` のような「ブランチから外れて�
 - `cntl restore --source=<commit> <path>` — 任意のコミットからの復元。現在は HEAD からのみ
 - `cntl restore` のディレクトリ指定 — 1 ファイルずつのみサポート
 - `.cntlignore` — `.cntl/` 以外を除外するルールは未実装。一時ファイルもコミット対象になります
-- conflict 解消モード、inspect モード (任意 commit の閲覧) — v0.3.0 予定
-- リモート操作 (`push` / `pull` / `fetch`) — ローカル完結
-- 2 層履歴のグルーピング — cntl の中核機能。v0.4.0 予定
+- `cntl merge <branch>` — ブランチの統合。v0.3.0 予定 (conflict 無し版から)
+- conflict 解消モード — メタデータ分離 + TUI。v0.4.0 予定
+- inspect モード (任意 commit の閲覧) — v0.5.0 予定
+- 2 層履歴のグルーピング — cntl の中核機能。v0.6.0 予定
+- リモート操作 (`push` / `pull` / `fetch`) — ローカル完結。v0.7.0 予定
 
 ---
 

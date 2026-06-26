@@ -11,7 +11,7 @@
 
 ## 状態
 
-**v0.2.0 (開発中)** — v0.1.0 (MVP) のローカル単一履歴に加え、ブランチ管理が動作します。
+**v0.2.0** — v0.1.0 (MVP) のローカル単一履歴に加え、ブランチ管理 (作成 / 切り替え) が動作します。
 
 | コマンド | 状態 | 役割 |
 |---|---|---|
@@ -87,10 +87,12 @@ cntl log                         # → コミット履歴
 | Version | 内容 |
 |---|---|
 | v0.1.0 (MVP) | Walking skeleton: init / config / status / diff / restore / commit / log |
-| **v0.2.0 ← 現在** | branch ✅ / checkout ✅ / `restore --source=<commit>` ⏳ |
-| v0.3.0 | conflict メタデータ分離 + TUI 解消モード、inspect モード (detached HEAD 相当の明示モード — DR-002 参照) |
-| v0.4.0 | 2 層履歴 (グルーピング)、branch-scoped タグ |
-| v0.5.0 | リモート操作 (push/pull/fetch) |
+| v0.2.0 ✅ | ブランチ操作: branch / checkout |
+| **v0.3.0 ← 次** | merge (conflict 無し版): fast-forward + 非衝突統合 |
+| v0.4.0 | conflict 解消: メタデータ分離 + TUI 解消モード |
+| v0.5.0 | inspect モード (任意 commit の明示閲覧 — DR-002 参照) + `restore --source=<commit>` |
+| v0.6.0 | 2 層履歴 (グルーピング)、branch-scoped タグ |
+| v0.7.0 | リモート操作 (push/pull/fetch) |
 | 将来 | patch-based モデルへの移行 (Pijul/Darcs 風) |
 
 ---

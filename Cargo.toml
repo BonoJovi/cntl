@@ -10,9 +10,9 @@ clap = { version = "4", features = ["derive"] }
 # ハッシュ: blake3 は SHA-256 より高速で暗号学的にも安全
 blake3 = "1"
 
-# シリアライゼーション: bincode 2.x + serde 互換機能
+# シリアライゼーション: postcard (仕様化された安定ワイヤーフォーマット) + serde
 serde = { version = "1", features = ["derive"] }
-bincode = { version = "2", features = ["serde"] }
+postcard = { version = "1", default-features = false, features = ["alloc"] }
 
 # SQLite: bundled で SQLite 本体を同梱 (システム依存を減らす)
 rusqlite = { version = "0.32", features = ["bundled"] }

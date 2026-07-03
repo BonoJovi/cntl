@@ -73,7 +73,7 @@ cntl log                         # → コミット履歴
 |---|---|
 | 言語 | **Rust** (edition 2024) |
 | ハッシュ | **blake3** |
-| シリアライズ | **bincode** + serde |
+| シリアライズ | **postcard** + serde |
 | ストレージ | **SQLite** (rusqlite, bundled) |
 | CLI | **clap** (derive macro) |
 | 日時 | chrono (UTC 保存・ローカル TZ 表示) |

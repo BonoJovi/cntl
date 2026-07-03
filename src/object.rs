@@ -50,10 +50,9 @@ pub fn hash_bytes(data: &[u8]) -> ObjectHash {
     *blake3::hash(data).as_bytes()
 }
 
-/// Serialize a value with bincode using the standard configuration.
+/// Serialize a value with postcard's stable wire format.
 pub fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>> {
-    bincode::serde::encode_to_vec(value, bincode::config::standard())
-        .context("failed to encode object")
+    postcard::to_allocvec(value).context("failed to encode object")
 }
 
 /// Insert an object into the `objects` table; no-op if the hash is already present.
@@ -71,11 +70,9 @@ pub fn store_object(
     Ok(())
 }
 
-/// Deserialize a value with bincode using the standard configuration.
+/// Deserialize a value with postcard's stable wire format.
 pub fn decode<T: DeserializeOwned>(bytes: &[u8]) -> Result<T> {
-    let (value, _len) = bincode::serde::decode_from_slice(bytes, bincode::config::standard())
-        .context("failed to decode object")?;
-    Ok(value)
+    postcard::from_bytes(bytes).context("failed to decode object")
 }
 
 fn load_raw(conn: &Connection, hash: &ObjectHash, expected_type: &str) -> Result<Vec<u8>> {

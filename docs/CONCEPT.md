@@ -151,7 +151,7 @@ Gitとは別設計の独自バージョン管理システム (VCS)。Rust製、C
 |---|---|---|
 | 言語 | Rust (edition 2024) | パフォーマンス、型安全性 |
 | ハッシュ | **blake3** | 高速・暗号学的・モダン (SHA-256 より高速) |
-| シリアライズ | **bincode** + serde | Rust 事実上標準、コンパクト |
+| シリアライズ | **postcard** + serde | 仕様化された安定ワイヤーフォーマット、コンパクト ([DR-003](adr/DR-003-object-encoding.md)) |
 | ストレージ | **SQLite** (rusqlite) | 2 層 DB (グローバル設定 + per-repo)、ACID、Fossil/Sapling 路線 |
 | CLI | **clap** (derive macro) | エコシステム標準 |
 | 設定ディレクトリ解決 | directories | XDG/macOS/Windows 標準パス取得 |
@@ -169,7 +169,7 @@ Git 同様の 3 種類のオブジェクトを採用 (v0.2+ で patch-based モ�
 - **tree**: ディレクトリスナップショット (エントリ名 → blob/tree ハッシュのマップ)
 - **commit**: parent commit hash + tree hash + author + timestamp (UTC) + message
 
-すべて bincode でシリアライズして SQLite に格納。
+すべて postcard でシリアライズして SQLite に格納。
 
 ### 作業ツリー追跡
 - **index なし** (MVP)。`cntl status` 実行時に作業ツリーを毎回スキャンして HEAD tree と比較
@@ -213,7 +213,7 @@ CREATE TABLE settings (
 CREATE TABLE objects (
     hash      BLOB PRIMARY KEY,  -- blake3 hash (32 bytes)
     obj_type  TEXT NOT NULL,     -- 'blob' | 'tree' | 'commit'
-    data      BLOB NOT NULL      -- bincode-serialized payload
+    data      BLOB NOT NULL      -- postcard-serialized payload
 );
 
 CREATE TABLE refs (

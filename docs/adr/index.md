@@ -20,6 +20,7 @@ This directory collects **Design Rationale (DR)** records — the *why* behind s
 |---|---|---|
 | [DR-001](DR-001-storage.md) | Storage Design / ストレージ設計 — Single SQLite per repository / 1 リポジトリ = 1 SQLite ファイル | Accepted (v0.1.0) |
 | [DR-002](DR-002-head-and-branches.md) | HEAD and Branch Model / HEAD とブランチのモデル — Symbolic HEAD with no accidental detachment / シンボリック HEAD と事故的 detached の排除 | Accepted (v0.2.0) |
+| [DR-003](DR-003-object-encoding.md) | Object Encoding / オブジェクトエンコーディング — postcard over bincode / bincode から postcard へ | Accepted (pre-v0.3.0) |
 
 ---
 

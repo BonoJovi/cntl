@@ -80,17 +80,21 @@ reviews:
 
     - path: "Cargo.toml"
       instructions: |
-        This repo has NO Dependabot; `cargo audit` is run manually
-        (see project memory). Any new direct dependency MUST be
-        called out — check for maintenance status, download count,
-        and open advisories. Bumping a format-sensitive dep
-        (`postcard`, `serde`, `blake3`, `rusqlite`) is especially
-        risky: `postcard` and `blake3` changes can invalidate every
-        stored hash (see DR-003); `rusqlite` bundled-SQLite bumps
-        can migrate the file format. Flag any such bump that does
-        not name the RUSTSEC / release note it addresses. The
-        version here should move together with the `Cargo.lock`
-        entry in the same commit for a reproducible build.
+        Weekly Dependabot is configured for both `cargo` and
+        `github-actions` (see `.github/dependabot.yml`). A human-
+        authored dep change here — a NEW direct dependency, or a
+        bump that Dependabot did not open — MUST be called out:
+        check maintenance status, download count, and open
+        advisories, since Dependabot only announces already-known
+        outdated versions and not first-time adds. Bumping a
+        format-sensitive dep (`postcard`, `serde`, `blake3`,
+        `rusqlite`) is especially risky: `postcard` and `blake3`
+        changes can invalidate every stored hash (see DR-003);
+        `rusqlite` bundled-SQLite bumps can migrate the file
+        format. Flag any such bump that does not name the
+        RUSTSEC / release note it addresses. The version here
+        should move together with the `Cargo.lock` entry in the
+        same commit for a reproducible build.
 
     - path: "docs/adr/**"
       instructions: |

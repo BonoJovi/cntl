@@ -91,10 +91,16 @@ reviews:
         `rusqlite`) is especially risky: `postcard` and `blake3`
         changes can invalidate every stored hash (see DR-003);
         `rusqlite` bundled-SQLite bumps can migrate the file
-        format. Flag any such bump that does not name the
-        RUSTSEC / release note it addresses. The version here
-        should move together with the `Cargo.lock` entry in the
-        same commit for a reproducible build.
+        format. Any such bump — a direct edit here OR a Dependabot
+        PR that touches only `Cargo.toml` / `Cargo.lock` — MUST
+        either (a) ship an `src/object.rs` migration path that
+        rehashes / re-encodes existing objects, or (b) argue
+        explicitly why the bump is format-neutral (e.g. patch-
+        level with no wire-format change per its release notes)
+        and name the RUSTSEC / release note it addresses. Flag
+        any such bump that does neither. The version here should
+        move together with the `Cargo.lock` entry in the same
+        commit for a reproducible build.
 
     - path: "docs/adr/**"
       instructions: |

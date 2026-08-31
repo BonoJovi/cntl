@@ -1,0 +1,139 @@
+# CodeRabbit configuration for cntl.
+# https://docs.coderabbit.ai/reference/configuration
+#
+# cntl is a Rust-based CLI VCS with a two-tier history model —
+# single-crate, ~1,200 lines, content-addressable storage via
+# blake3 over postcard-encoded objects, one SQLite DB per
+# repository. This config tunes CodeRabbit to the format-critical
+# hotspots (encoding, hashing, schema) and to the ADR governance
+# already established.
+
+language: "ja-JP"
+early_access: false
+enable_free_tier: true
+
+# tone_instructions is capped at 250 chars by the validator — keep terse.
+tone_instructions: |
+  Each finding needs a concrete failure scenario (specific inputs/state → wrong output, crash, data corruption, history broken). Rank real correctness / persistence / format-stability bugs above style nits. Reply in Japanese; keep findings ≤10 lines.
+
+reviews:
+  profile: "assertive"
+  request_changes_workflow: false
+  high_level_summary: true
+
+  path_filters:
+    # Rust build artifacts.
+    - "!target/**"
+
+  path_instructions:
+    - path: "src/**/*.rs"
+      instructions: |
+        Production Rust must NOT use unwrap()/expect() — always use
+        Result<T, E> (this repo already uses `anyhow` at the app
+        layer). unwrap()/expect() are allowed only under
+        `#[cfg(test)]` and in `#[test]` / `#[tokio::test]` fns.
+        Poison-recovery via `.unwrap_or_else(|e| e.into_inner())`
+        on Mutex/RwLock is idiomatic and NOT a violation.
+        Additional project rules to flag:
+        (a) SQLite operations that need to hold an invariant across
+            multiple statements MUST be wrapped in a transaction.
+            The repo uses `rusqlite` with a single per-repo DB
+            (`.cntl/repo.db`) — a half-applied write on commit /
+            branch switch / checkout can leave the working tree
+            and DB out of sync.
+        (b) Path handling from the working tree or from a
+            peer-supplied name (branch name, config value) MUST be
+            validated before use — reject empty strings, path
+            traversal (`..`, absolute paths, symlink escape from
+            the repo root), and NUL bytes. `walkdir` is used for
+            traversal but does not itself guard against following
+            symlinks out of the repo.
+        (c) Do not flag comment length or missing doc comments.
+
+    - path: "src/object.rs"
+      instructions: |
+        HASH-CRITICAL. `object::encode()` produces the exact bytes
+        that `object::hash_bytes()` (blake3) hashes to produce the
+        content-address for every blob / tree / commit. Any change
+        to the encoding path — the `postcard` version, the object
+        struct shape, field order, added / removed fields, tag
+        bytes, endianness — silently reassigns the hash of every
+        pre-existing object and **breaks all history** in every
+        repo already in use. See `docs/adr/DR-003-object-encoding.md`.
+        Flag any change to this file that touches encoding, the
+        `postcard` dependency line in Cargo.toml, or the hash
+        primitive, unless the PR also ships a migration path that
+        rehashes / re-encodes existing objects. A backwards-
+        compatible encoding change is still a MAJOR version bump.
+
+    - path: "src/cli.rs"
+      instructions: |
+        CLI surface — every subcommand's flag set is part of the
+        stable user contract. Do NOT rename, remove, or change the
+        semantics of an existing `#[arg]` on a released command
+        without a deprecation cycle. Adding a new flag with a
+        sensible default is fine; changing the default of an
+        existing flag is a breaking change even if the flag name
+        stays. Error messages surfaced here reach the terminal —
+        avoid leaking absolute paths, DB internals, or hash prefixes
+        that expose users' filesystem layout in copy-pasted logs.
+
+    - path: "Cargo.toml"
+      instructions: |
+        This repo has NO Dependabot; `cargo audit` is run manually
+        (see project memory). Any new direct dependency MUST be
+        called out — check for maintenance status, download count,
+        and open advisories. Bumping a format-sensitive dep
+        (`postcard`, `serde`, `blake3`, `rusqlite`) is especially
+        risky: `postcard` and `blake3` changes can invalidate every
+        stored hash (see DR-003); `rusqlite` bundled-SQLite bumps
+        can migrate the file format. Flag any such bump that does
+        not name the RUSTSEC / release note it addresses. The
+        version here should move together with the `Cargo.lock`
+        entry in the same commit for a reproducible build.
+
+    - path: "docs/adr/**"
+      instructions: |
+        Architecture Decision Records — these are the authoritative
+        source for design rules the code review depends on
+        (encoding stability, storage layout, head/branch model).
+        An ADR whose Status changes from `Accepted` to
+        `Superseded` / `Deprecated` MUST link to the successor ADR.
+        A new ADR should have a distinct `DR-NNN` number
+        (highest-numbered existing + 1) and appear in `index.md`.
+        Editing an `Accepted` ADR's Context / Decision sections
+        after the fact rewrites project history — prefer a new
+        ADR that supersedes it.
+
+    - path: "**/*.md"
+      instructions: |
+        Docs including README and TUTORIAL. When a subcommand's
+        behaviour changes in code, the command table in `README.md`
+        and the walk-through in `docs/TUTORIAL.md` must move in
+        the same PR — a stale README lists commands that no longer
+        exist or hides new ones. Skip prose-level style nits.
+
+  auto_review:
+    enabled: true
+    drafts: false
+    auto_incremental_review: true
+    # `0` disables auto-pause and re-reviews every push, which
+    # burns free-tier review quota fast on chatty branches. `1`
+    # pauses after the first review so subsequent commits require
+    # an explicit `@coderabbitai review` (or the next base-branch
+    # merge).
+    auto_pause_after_reviewed_commits: 1
+    # `ignore_title_keywords` uses case-insensitive SUBSTRING match.
+    # `wip` alone matches `feat: add swipe gesture`; even `wip:`
+    # matches a meta-PR like `fix: document the "wip:" syntax`.
+    # `[wip]` (bracketed) is the safest form — practically no
+    # innocent PR title contains those five characters in sequence.
+    ignore_title_keywords:
+      - "[wip]"
+      - "[skip review]"
+    base_branches:
+      - "main"
+      - "dev"
+
+chat:
+  auto_reply: true

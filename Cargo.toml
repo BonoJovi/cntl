@@ -18,7 +18,7 @@ postcard = { version = "1", default-features = false, features = ["alloc"] }
 rusqlite = { version = "0.32", features = ["bundled"] }
 
 # クロスプラットフォームの標準パス取得 (XDG / macOS / Windows)
-directories = "5"
+directories = "6"
 
 # 作業ツリーのファイルシステム走査
 walkdir = "2"

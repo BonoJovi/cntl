@@ -1,0 +1,51 @@
+# CodeQL Advanced setup for cntl.
+# cntl is a pure Rust CLI (no C/C++, JS, or Python), so the matrix is
+# `rust` for the source and `actions` for the workflow files themselves.
+# Neither language needs a manual build step for CodeQL — `build-mode: none`
+# is enough for `rust` (it uses the CodeQL Rust extractor) and for `actions`.
+
+name: "CodeQL Advanced"
+
+on:
+  push:
+    branches: [ "main", "dev" ]
+  pull_request:
+    branches: [ "main", "dev" ]
+  schedule:
+    # Weekly Monday 22:45 UTC — same slot as the other Rust repos in
+    # this org so the runners land at a predictable time.
+    - cron: '45 22 * * 1'
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      packages: read
+      actions: read
+      contents: read
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: actions
+            build-mode: none
+          - language: rust
+            build-mode: none
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: "/language:${{matrix.language}}"
